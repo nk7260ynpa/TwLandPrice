@@ -1,0 +1,46 @@
+# GitLab CI/CD：將 main 分支單向鏡像同步到 GitHub
+#
+# 觸發時機：每當有 commit 進入 main 分支（含其他分支 merge 進 main），
+#           就把 main 分支與標籤推送到 GitHub，保持兩邊程式碼一致。
+#
+# 前置需求：
+#   1. GitLab 專案需有可用的 Runner（本專案已具備 instance 共享 Runner）。
+#   2. CI/CD 變數 GITHUB_SSH_KEY：GitHub Deploy Key 的「私鑰」內容，
+#      對應公鑰須加到 GitHub repo 的 Settings → Deploy keys，且勾選
+#      「Allow write access」。建議將變數設為 Protected（main 為受保護分支）。
+#   3. Runner 需能對外連線到 github.com（SSH，22 埠）。
+
+stages:
+  - mirror
+
+sync-to-github:
+  stage: mirror
+  image: alpine:latest
+  # 僅在預設分支（main）有更新時觸發
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    # 取得完整歷史，避免 shallow clone 導致 push 被 GitHub 拒絕
+    GIT_DEPTH: "0"
+    GITHUB_REMOTE: "git@github.com:nk7260ynpa/TwLandPrice.git"
+  before_script:
+    - apk add --no-cache git openssh-client
+    - mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    # 同時相容「File 型」與「一般型」CI 變數
+    - |
+      if [ -f "$GITHUB_SSH_KEY" ]; then
+        cp "$GITHUB_SSH_KEY" "$HOME/.ssh/github_key"
+      else
+        printf '%s\n' "$GITHUB_SSH_KEY" > "$HOME/.ssh/github_key"
+      fi
+    - chmod 600 "$HOME/.ssh/github_key"
+    # 預載 GitHub host key，避免首次連線出現互動式確認
+    - ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+    - export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/github_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+  script:
+    # 建立（或更新）指向 GitHub 的遠端
+    - git remote add github "$GITHUB_REMOTE" 2>/dev/null || git remote set-url github "$GITHUB_REMOTE"
+    # 將目前 main 的內容推送到 GitHub main
+    - git push github "HEAD:refs/heads/main"
+    # 同步標籤
+    - git push github --tags
