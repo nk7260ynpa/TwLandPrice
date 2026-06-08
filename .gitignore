@@ -1,0 +1,5 @@
+gh_deploy_key
+gh_deploy_key.pub
+.gl_var.json
+*.log
+logs/
