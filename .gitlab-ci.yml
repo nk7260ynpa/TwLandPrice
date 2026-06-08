@@ -26,14 +26,22 @@ sync-to-github:
   before_script:
     - apk add --no-cache git openssh-client
     - mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-    # 同時相容「File 型」與「一般型」CI 變數
+    # 還原私鑰：同時相容「File 型」與「一般型」CI 變數，並移除可能的 CR（CRLF）
     - |
       if [ -f "$GITHUB_SSH_KEY" ]; then
-        cp "$GITHUB_SSH_KEY" "$HOME/.ssh/github_key"
+        tr -d '\r' < "$GITHUB_SSH_KEY" > "$HOME/.ssh/github_key"
       else
-        printf '%s\n' "$GITHUB_SSH_KEY" > "$HOME/.ssh/github_key"
+        printf '%s\n' "$GITHUB_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/github_key"
       fi
     - chmod 600 "$HOME/.ssh/github_key"
+    # 金鑰格式自我診斷（僅顯示行數與首行前綴，不洩漏私鑰主體）
+    - |
+      echo "金鑰行數=$(wc -l < "$HOME/.ssh/github_key")｜首行前綴=[$(head -n1 "$HOME/.ssh/github_key" | cut -c1-30)]"
+      if ! ssh-keygen -y -f "$HOME/.ssh/github_key" > /dev/null 2>&1; then
+        echo "✗ 私鑰無法解析：請確認 GITHUB_SSH_KEY 為『完整、無密碼』的 OpenSSH/PEM 私鑰（非 .ppk），變數類型建議設為 File。"
+        exit 1
+      fi
+      echo "✓ 私鑰格式正確"
     # 預載 GitHub host key，避免首次連線出現互動式確認
     - ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
     - export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/github_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
