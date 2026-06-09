@@ -6,9 +6,68 @@
 
 ```
 TwLandPrice/
-├── .gitlab-ci.yml   # GitLab CI/CD：main 更新時自動鏡像同步到 GitHub
-└── README.md        # 專案說明
+├── twlandprice/          # 主程式套件
+│   ├── __init__.py
+│   └── fetcher.py        # 下載 → 解壓 → 解析內政部實價登錄批次資料
+├── tests/                # 單元測試
+│   └── test_fetcher.py
+├── docker/               # Docker 環境
+│   ├── Dockerfile
+│   ├── build.sh          # 建立 image
+│   └── docker-compose.yaml
+├── logs/                 # 執行 log（內容不納入版控）
+├── requirements.txt
+├── pytest.ini
+├── run.sh                # 啟動主程式 / 測試
+├── .gitlab-ci.yml        # GitLab CI/CD：main 更新自動鏡像到 GitHub
+└── README.md
 ```
+
+## 資料來源
+
+內政部不動產成交案件實際資訊資料供應系統（實價登錄）：
+
+- 下載頁：<https://plvr.land.moi.gov.tw/DownloadOpenData>
+- 批次資料每月 1、11、21 發布；中央**無即時 API**，採 ZIP 批次下載。
+- 內容涵蓋不動產買賣、預售屋買賣與不動產租賃成交案件。
+
+## 使用方式
+
+所有程式於 Docker container 內執行。
+
+### 建立 image
+
+```bash
+docker/build.sh
+```
+
+### 執行擷取（下載 → 解壓 → 解析）
+
+```bash
+./run.sh                      # 最新一期
+./run.sh --season 113S1       # 指定民國 113 年第 1 季
+```
+
+### 執行單元測試
+
+```bash
+./run.sh pytest
+# 或
+docker compose -f docker/docker-compose.yaml run --rm app pytest
+```
+
+## 主要模組：`twlandprice.fetcher`
+
+| 函式 | 說明 |
+| --- | --- |
+| `build_download_url` | 組出內政部批次資料下載網址 |
+| `download_opendata` | 下載批次 ZIP |
+| `extract_zip` | 解壓並列出其中的 CSV |
+| `parse_land_csv` | 解析雙標頭 CSV（以中文欄名為 key） |
+| `fetch_and_parse` | 完整流程：下載 → 解壓 → 解析 |
+
+> 內政部 CSV 採雙標頭格式（第一列中文欄名、第二列英文欄名），
+> `parse_land_csv` 會以中文欄名為 key 並自動跳過英文標頭列。
 
 ## 版本控制與遠端
 
@@ -28,7 +87,6 @@ TwLandPrice/
 設定需求：
 
 1. **Runner**：GitLab 專案需有可用的 Runner。
-2. **CI/CD 變數 `GITHUB_SSH_KEY`**：GitHub Deploy Key 的私鑰內容。
-   對應公鑰須加到 GitHub repo 的 *Settings → Deploy keys* 並勾選
-   *Allow write access*；建議將變數設為 *Protected*。
+2. **CI/CD 變數 `GITHUB_SSH_KEY`**：對 GitHub repo 具 push 權限的 SSH 私鑰
+   （File 型）。
 3. **網路**：Runner 需能對外連線至 `github.com`（SSH，22 埠）。

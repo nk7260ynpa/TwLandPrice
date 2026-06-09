@@ -1,5 +1,19 @@
+# 金鑰與機敏暫存
 gh_deploy_key
 gh_deploy_key.pub
 .gl_var.json
+
+# Log（保留目錄佔位檔）
 *.log
-logs/
+logs/*
+!logs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# 下載與解壓的資料
+data/
