@@ -1,0 +1,13 @@
+# TwLandPrice 開發與測試用 Docker Compose 設定。
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: twlandprice:latest
+    working_dir: /app
+    volumes:
+      # 掛載專案原始碼，使本機改動即時反映於容器。
+      - ../:/app
+      # 掛載 log 目錄。
+      - ../logs:/app/logs

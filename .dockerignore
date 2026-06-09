@@ -1,0 +1,10 @@
+.git
+logs
+data
+__pycache__
+*.pyc
+.pytest_cache
+.venv
+gh_deploy_key
+gh_deploy_key.pub
+.gl_var.json
