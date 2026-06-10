@@ -24,6 +24,7 @@ TwLandPrice/
 │   ├── build.sh          # 建立 image
 │   └── docker-compose.yaml
 ├── logs/                 # 執行 log（內容不納入版控）
+├── plans/                # 開發計畫文件（Claude Code plan mode 產出）
 ├── requirements.txt
 ├── pytest.ini
 ├── run.sh                # 啟動主程式 / 測試
