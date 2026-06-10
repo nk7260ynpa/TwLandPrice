@@ -10,11 +10,13 @@ TwLandPrice/
 │   ├── __init__.py
 │   ├── fetcher.py        # 下載 → 解壓 → 解析內政部實價登錄批次資料
 │   ├── cleaner.py        # 欄位清理／正規化（日期、金額、面積、樓層等）
-│   └── storage.py        # 清理後資料寫入 SQLite（跨期累積與查詢）
+│   ├── storage.py        # 清理後資料寫入 SQLite（跨期累積與查詢）
+│   └── analyzer.py       # 統計分析（地區／月份／交易類型三維度報表）
 ├── tests/                # 單元測試
 │   ├── test_fetcher.py
 │   ├── test_cleaner.py
-│   └── test_storage.py
+│   ├── test_storage.py
+│   └── test_analyzer.py
 ├── docker/               # Docker 環境
 │   ├── Dockerfile
 │   ├── build.sh          # 建立 image
@@ -52,6 +54,14 @@ docker/build.sh
 ./run.sh --season 113S1       # 指定民國 113 年第 1 季
 ./run.sh --clean              # 解析後執行欄位正規化
 ./run.sh --season 113S1 --db data/twlandprice.db   # 清理後寫入 SQLite
+```
+
+### 執行統計分析（需先以 `--db` 入庫）
+
+```bash
+./run.sh analyze                                   # 買賣依地區（預設前 10）
+./run.sh analyze --report monthly --table rent     # 租賃月份趨勢
+./run.sh analyze --report type --top 0             # 交易類型（全部）
 ```
 
 ### 執行單元測試
@@ -108,15 +118,31 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 > 同（縣市, 季別）批次重複匯入採**先刪後寫**，重跑不產生重複資料；
 > 新欄位自動以 `ALTER TABLE` 補上；`datetime.date` 以 ISO 字串儲存。
 
+## 主要模組：`twlandprice.analyzer`
+
+| 函式 | 說明 |
+| --- | --- |
+| `district_stats` | 依縣市＋鄉鎮市區聚合（筆數遞減排序） |
+| `monthly_trend` | 依月份聚合（時間趨勢，月份遞增排序） |
+| `type_stats` | 依交易標的（交易類型）聚合 |
+| `format_report` | 報表結果格式化為 TSV 文字 |
+| `main` | CLI：`--db`／`--table`／`--report`／`--top` |
+
+> 指標：筆數、單價（元/平方公尺）中位數與平均、總價中位數
+> （rent 表自動改用 `租賃年月日`／`總額元`）。
+> cleaner 容錯保留的字串值不納入數值統計，但計入筆數；
+> 日期非 ISO 格式的記錄不納入月份分組。
+
 ## 待辦事項
 
-目前完成資料擷取、清理與儲存層，後續規劃如下：
+目前完成資料擷取、清理、儲存與分析層，後續規劃如下：
 
 - [x] **資料清理**：正規化欄位（日期、金額、面積單位等）。
   `建物分層` 多值複合欄暫保留原字串，待分析需求明確後再拆解。
 - [x] **資料儲存**：將清理後的資料寫入資料庫，支援跨期累積與查詢。
   採 SQLite 單檔資料庫（`--db PATH`）；跨期累積以季別為批次單位。
-- [ ] **資料分析**：依地區、時間、交易類型等維度進行統計分析。
+- [x] **資料分析**：依地區、時間、交易類型等維度進行統計分析。
+  `./run.sh analyze`；指標為筆數、單價中位數／平均、總價中位數。
 - [ ] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
 
 ## 版本控制與遠端
