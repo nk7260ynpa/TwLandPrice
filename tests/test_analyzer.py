@@ -44,6 +44,18 @@ def _make_db(tmp_path: Path):
     return conn
 
 
+def test_county_stats(tmp_path: Path):
+    """縣市報表：依縣市聚合並依筆數遞減排序。"""
+    conn = _make_db(tmp_path)
+    rows = analyzer.county_stats(conn, "sale")
+    conn.close()
+
+    assert len(rows) == 1
+    assert rows[0]["縣市"] == "臺北市"
+    assert rows[0]["筆數"] == 4
+    assert rows[0]["單價中位數"] == 200000
+
+
 def test_district_stats(tmp_path: Path):
     """地區報表：筆數含全部記錄，數值統計排除字串值。"""
     conn = _make_db(tmp_path)
