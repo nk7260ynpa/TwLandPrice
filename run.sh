@@ -6,6 +6,7 @@
 #   ./run.sh                      # 下載並解析最新一期
 #   ./run.sh --season 113S1       # 指定民國 113 年第 1 季
 #   ./run.sh analyze --report district   # 統計分析（需先以 --db 入庫）
+#   ./run.sh visualize            # 產生 HTML 視覺化報告（output/）
 #   ./run.sh pytest               # 執行單元測試
 
 set -euo pipefail
@@ -23,6 +24,12 @@ if [[ "${1:-}" == "analyze" ]]; then
   shift
   exec docker compose -f "${COMPOSE_FILE}" run --rm app \
     python -m twlandprice.analyzer "$@"
+fi
+
+if [[ "${1:-}" == "visualize" ]]; then
+  shift
+  exec docker compose -f "${COMPOSE_FILE}" run --rm app \
+    python -m twlandprice.visualizer "$@"
 fi
 
 exec docker compose -f "${COMPOSE_FILE}" run --rm app \

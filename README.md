@@ -11,12 +11,14 @@ TwLandPrice/
 │   ├── fetcher.py        # 下載 → 解壓 → 解析內政部實價登錄批次資料
 │   ├── cleaner.py        # 欄位清理／正規化（日期、金額、面積、樓層等）
 │   ├── storage.py        # 清理後資料寫入 SQLite（跨期累積與查詢）
-│   └── analyzer.py       # 統計分析（地區／月份／交易類型三維度報表）
+│   ├── analyzer.py       # 統計分析（縣市／地區／月份／交易類型報表）
+│   └── visualizer.py     # HTML 視覺化報告（縣市方格地圖＋圖表）
 ├── tests/                # 單元測試
 │   ├── test_fetcher.py
 │   ├── test_cleaner.py
 │   ├── test_storage.py
-│   └── test_analyzer.py
+│   ├── test_analyzer.py
+│   └── test_visualizer.py
 ├── docker/               # Docker 環境
 │   ├── Dockerfile
 │   ├── build.sh          # 建立 image
@@ -62,6 +64,13 @@ docker/build.sh
 ./run.sh analyze                                   # 買賣依地區（預設前 10）
 ./run.sh analyze --report monthly --table rent     # 租賃月份趨勢
 ./run.sh analyze --report type --top 0             # 交易類型（全部）
+```
+
+### 產生視覺化報告（需先以 `--db` 入庫）
+
+```bash
+./run.sh visualize                                 # 買賣報告 → output/report_sale.html
+./run.sh visualize --table rent                    # 租賃報告 → output/report_rent.html
 ```
 
 ### 執行單元測試
@@ -122,6 +131,7 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 
 | 函式 | 說明 |
 | --- | --- |
+| `county_stats` | 依縣市聚合（筆數遞減排序） |
 | `district_stats` | 依縣市＋鄉鎮市區聚合（筆數遞減排序） |
 | `monthly_trend` | 依月份聚合（時間趨勢，月份遞增排序） |
 | `type_stats` | 依交易標的（交易類型）聚合 |
@@ -133,9 +143,24 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 > cleaner 容錯保留的字串值不納入數值統計，但計入筆數；
 > 日期非 ISO 格式的記錄不納入月份分組。
 
+## 主要模組：`twlandprice.visualizer`
+
+| 函式 | 說明 |
+| --- | --- |
+| `svg_tile_map` | 台灣 22 縣市方格地圖（顏色深淺＝單價中位數） |
+| `svg_hbar_chart` / `svg_line_chart` | 橫條圖／折線圖 SVG 產生器 |
+| `render_report` / `write_report` | 組裝／輸出完整 HTML 報告 |
+| `main` | CLI：`--db`／`--table`／`--output` |
+
+> 純標準函式庫產生**單檔 HTML**（內嵌 SVG），瀏覽器原生渲染中文，
+> 不需 matplotlib 與 CJK 字型。地圖採方格地圖（tile grid map）近似
+> 地理位置呈現縣市分布，不需地理邊界資料。
+> 報告內容：縣市地價地圖、成交量前 15 區單價橫條圖、月份趨勢折線圖
+> （單價＋筆數）、交易類型橫條圖；輸出至 `output/`（不納入版控）。
+
 ## 待辦事項
 
-目前完成資料擷取、清理、儲存與分析層，後續規劃如下：
+資料管線四層（擷取 → 清理 → 儲存 → 分析／視覺化）皆已完成：
 
 - [x] **資料清理**：正規化欄位（日期、金額、面積單位等）。
   `建物分層` 多值複合欄暫保留原字串，待分析需求明確後再拆解。
@@ -143,7 +168,8 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
   採 SQLite 單檔資料庫（`--db PATH`）；跨期累積以季別為批次單位。
 - [x] **資料分析**：依地區、時間、交易類型等維度進行統計分析。
   `./run.sh analyze`；指標為筆數、單價中位數／平均、總價中位數。
-- [ ] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
+- [x] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
+  `./run.sh visualize` 產生單檔 HTML 報告（縣市方格地圖＋圖表）。
 
 ## 版本控制與遠端
 

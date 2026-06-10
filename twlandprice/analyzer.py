@@ -103,6 +103,33 @@ def _fetch(conn: sqlite3.Connection, table: str,
         f"SELECT {column_sql} FROM {_quote_identifier(table)}").fetchall()
 
 
+def county_stats(conn: sqlite3.Connection,
+                 table: str = "sale") -> list[dict[str, object]]:
+    """依縣市聚合統計。
+
+    Args:
+        conn: 資料庫連線。
+        table: 主表名，預設 ``sale``。
+
+    Returns:
+        每縣市一筆統計 dict，依筆數遞減（同筆數依縣市）排序。
+    """
+    config = _TABLE_CONFIG[table]
+    rows = _fetch(conn, table, ["縣市", config["price"], config["total"]])
+    groups: dict[str, dict[str, list]] = {}
+    for county, price, total in rows:
+        group = groups.setdefault(county, {"prices": [], "totals": []})
+        group["prices"].append(price)
+        group["totals"].append(total)
+    result = []
+    for county, group in groups.items():
+        entry = {"縣市": county, "筆數": len(group["prices"])}
+        entry.update(_summary(group["prices"], group["totals"]))
+        result.append(entry)
+    result.sort(key=lambda e: (-e["筆數"], e["縣市"]))
+    return result
+
+
 def district_stats(conn: sqlite3.Connection,
                    table: str = "sale") -> list[dict[str, object]]:
     """依縣市＋鄉鎮市區聚合統計。
@@ -199,6 +226,7 @@ def type_stats(conn: sqlite3.Connection,
 
 # 報表名稱 → 報表函式。
 _REPORTS = {
+    "county": county_stats,
     "district": district_stats,
     "monthly": monthly_trend,
     "type": type_stats,
