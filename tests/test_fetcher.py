@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from twlandprice import fetcher
+from twlandprice import cleaner, fetcher
 
 # 內政部雙標頭 CSV 範例（第一列中文欄名、第二列英文欄名，其後為資料）。
 _SAMPLE_CSV = (
@@ -147,3 +147,37 @@ def test_fetch_and_parse(tmp_path: Path):
     assert len(result["a_lvr_land_a.csv"]) == 2
     assert len(result["e_lvr_land_b_park.csv"]) == 2
     assert "schema-main.csv" not in result
+
+
+def _make_zip_response() -> mock.Mock:
+    """組出含單一主表 CSV 的 mock 下載回應。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("a_lvr_land_a.csv", _SAMPLE_CSV)
+    fake_response = mock.Mock()
+    fake_response.iter_content.return_value = [buf.getvalue()]
+    fake_response.raise_for_status.return_value = None
+    return fake_response
+
+
+def test_main_with_clean_flag(tmp_path: Path):
+    """--clean 旗標應對解析結果執行欄位清理。"""
+    with mock.patch.object(fetcher.requests, "get",
+                           return_value=_make_zip_response()), \
+         mock.patch.object(fetcher.cleaner, "clean_records",
+                           side_effect=cleaner.clean_records) as mock_clean:
+        exit_code = fetcher.main(["--workdir", str(tmp_path), "--clean"])
+
+    assert exit_code == 0
+    assert mock_clean.call_count == 1
+
+
+def test_main_without_clean_flag(tmp_path: Path):
+    """無 --clean 時不應執行清理（預設行為不變）。"""
+    with mock.patch.object(fetcher.requests, "get",
+                           return_value=_make_zip_response()), \
+         mock.patch.object(fetcher.cleaner, "clean_records") as mock_clean:
+        exit_code = fetcher.main(["--workdir", str(tmp_path)])
+
+    assert exit_code == 0
+    mock_clean.assert_not_called()
