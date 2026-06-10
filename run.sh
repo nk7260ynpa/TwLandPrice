@@ -5,6 +5,7 @@
 # 用法：
 #   ./run.sh                      # 下載並解析最新一期
 #   ./run.sh --season 113S1       # 指定民國 113 年第 1 季
+#   ./run.sh analyze --report district   # 統計分析（需先以 --db 入庫）
 #   ./run.sh pytest               # 執行單元測試
 
 set -euo pipefail
@@ -16,6 +17,12 @@ mkdir -p "${SCRIPT_DIR}/logs"
 
 if [[ "${1:-}" == "pytest" ]]; then
   exec docker compose -f "${COMPOSE_FILE}" run --rm app pytest
+fi
+
+if [[ "${1:-}" == "analyze" ]]; then
+  shift
+  exec docker compose -f "${COMPOSE_FILE}" run --rm app \
+    python -m twlandprice.analyzer "$@"
 fi
 
 exec docker compose -f "${COMPOSE_FILE}" run --rm app \
