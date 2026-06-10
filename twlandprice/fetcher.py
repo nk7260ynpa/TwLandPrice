@@ -15,6 +15,8 @@ from pathlib import Path
 
 import requests
 
+from twlandprice import cleaner
+
 logger = logging.getLogger(__name__)
 
 # 內政部開放資料下載端點。
@@ -214,12 +216,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="工作目錄（預設 data）")
     parser.add_argument("--file-name", default=_DEFAULT_FILE_NAME,
                         help="批次檔名（預設 lvr_landcsv.zip）")
+    parser.add_argument("--clean", action="store_true",
+                        help="解析後執行欄位正規化（日期、金額、面積、樓層等）")
     args = parser.parse_args(argv)
 
     _setup_logging()
     result = fetch_and_parse(Path(args.workdir), args.season, args.file_name)
+    if args.clean:
+        result = {name: cleaner.clean_records(records)
+                  for name, records in result.items()}
+    suffix = "（已清理）" if args.clean else ""
     for name, records in sorted(result.items()):
-        print(f"{name}: {len(records)} 筆")
+        print(f"{name}: {len(records)} 筆{suffix}")
     return 0
 
 
