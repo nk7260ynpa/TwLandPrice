@@ -9,10 +9,12 @@ TwLandPrice/
 ├── twlandprice/          # 主程式套件
 │   ├── __init__.py
 │   ├── fetcher.py        # 下載 → 解壓 → 解析內政部實價登錄批次資料
-│   └── cleaner.py        # 欄位清理／正規化（日期、金額、面積、樓層等）
+│   ├── cleaner.py        # 欄位清理／正規化（日期、金額、面積、樓層等）
+│   └── storage.py        # 清理後資料寫入 SQLite（跨期累積與查詢）
 ├── tests/                # 單元測試
 │   ├── test_fetcher.py
-│   └── test_cleaner.py
+│   ├── test_cleaner.py
+│   └── test_storage.py
 ├── docker/               # Docker 環境
 │   ├── Dockerfile
 │   ├── build.sh          # 建立 image
@@ -49,6 +51,7 @@ docker/build.sh
 ./run.sh                      # 最新一期
 ./run.sh --season 113S1       # 指定民國 113 年第 1 季
 ./run.sh --clean              # 解析後執行欄位正規化
+./run.sh --season 113S1 --db data/twlandprice.db   # 清理後寫入 SQLite
 ```
 
 ### 執行單元測試
@@ -90,13 +93,29 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 > 衍生欄位沿用官方「`原欄名-子欄名`」慣例（如 `交易筆棟數-土地`）。
 > `建物分層` 與 `車位所在樓層` 值域複雜，僅保留原字串。
 
+## 主要模組：`twlandprice.storage`
+
+| 函式 | 說明 |
+| --- | --- |
+| `connect` | 開啟（必要時建立）SQLite 資料庫連線 |
+| `parse_csv_name` | 解析 CSV 檔名為（縣市代碼, 縣市, 資料表名） |
+| `save_records` / `save_results` | 寫入單檔／整批清理後記錄（批次替換語意） |
+| `summarize` | 統計各資料表總筆數 |
+
+> 採標準函式庫 `sqlite3`，一表種一資料表：`sale`（買賣）／`presale`（預售）／
+> `rent`（租賃），子表加 `_land`／`_build`／`_park` 後綴；中文欄名直接作為欄位名，
+> 並附加 `縣市代碼`、`縣市`、`季別` metadata 欄。
+> 同（縣市, 季別）批次重複匯入採**先刪後寫**，重跑不產生重複資料；
+> 新欄位自動以 `ALTER TABLE` 補上；`datetime.date` 以 ISO 字串儲存。
+
 ## 待辦事項
 
-目前完成資料擷取與清理層，後續規劃如下：
+目前完成資料擷取、清理與儲存層，後續規劃如下：
 
 - [x] **資料清理**：正規化欄位（日期、金額、面積單位等）。
   `建物分層` 多值複合欄暫保留原字串，待分析需求明確後再拆解。
-- [ ] **資料儲存**：將清理後的資料寫入資料庫，支援跨期累積與查詢。
+- [x] **資料儲存**：將清理後的資料寫入資料庫，支援跨期累積與查詢。
+  採 SQLite 單檔資料庫（`--db PATH`）；跨期累積以季別為批次單位。
 - [ ] **資料分析**：依地區、時間、交易類型等維度進行統計分析。
 - [ ] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
 
