@@ -4,6 +4,7 @@
 """
 
 import io
+import sqlite3
 import zipfile
 from pathlib import Path
 from unittest import mock
@@ -181,3 +182,22 @@ def test_main_without_clean_flag(tmp_path: Path):
 
     assert exit_code == 0
     mock_clean.assert_not_called()
+
+
+def test_main_with_db_flag(tmp_path: Path):
+    """--db 旗標應自動清理並寫入 SQLite 資料庫。"""
+    db_path = tmp_path / "land.db"
+    with mock.patch.object(fetcher.requests, "get",
+                           return_value=_make_zip_response()):
+        exit_code = fetcher.main(
+            ["--workdir", str(tmp_path), "--db", str(db_path)])
+
+    assert exit_code == 0
+    assert db_path.exists()
+    conn = sqlite3.connect(db_path)
+    count, = conn.execute("SELECT COUNT(*) FROM sale").fetchone()
+    price, = conn.execute(
+        "SELECT 總價元 FROM sale WHERE 鄉鎮市區 = '大安區'").fetchone()
+    conn.close()
+    assert count == 2
+    assert price == 12000000

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import requests
 
-from twlandprice import cleaner
+from twlandprice import cleaner, storage
 
 logger = logging.getLogger(__name__)
 
@@ -218,16 +218,28 @@ def main(argv: list[str] | None = None) -> int:
                         help="批次檔名（預設 lvr_landcsv.zip）")
     parser.add_argument("--clean", action="store_true",
                         help="解析後執行欄位正規化（日期、金額、面積、樓層等）")
+    parser.add_argument("--db", default=None, metavar="PATH",
+                        help="將清理後資料寫入 SQLite 資料庫（自動套用 --clean）")
     args = parser.parse_args(argv)
 
     _setup_logging()
     result = fetch_and_parse(Path(args.workdir), args.season, args.file_name)
-    if args.clean:
+    if args.clean or args.db:
         result = {name: cleaner.clean_records(records)
                   for name, records in result.items()}
-    suffix = "（已清理）" if args.clean else ""
+    suffix = "（已清理）" if args.clean or args.db else ""
     for name, records in sorted(result.items()):
         print(f"{name}: {len(records)} 筆{suffix}")
+    if args.db:
+        season = args.season or storage.DEFAULT_SEASON
+        conn = storage.connect(Path(args.db))
+        try:
+            counts = storage.save_results(conn, result, season=season)
+        finally:
+            conn.close()
+        total = sum(counts.values())
+        print(f"已寫入 {args.db}：{len(counts)} 個資料表、共 {total} 筆"
+              f"（季別：{season}）")
     return 0
 
 
