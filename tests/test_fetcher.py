@@ -19,6 +19,21 @@ _SAMPLE_CSV = (
     "信義區,房地(土地+建物),臺北市信義區△△路,8500000\n"
 )
 
+# 子表（_park）範例：首欄為英數編號，英文標頭列含空欄。
+_SAMPLE_SUBTABLE_CSV = (
+    "編號,車位類別,車位價格,車位面積平方公尺,車位所在樓層\n"
+    "Serial number,berth category,berth price,berth area square meter,\n"
+    "RPTNMLQKMHLGFJE66CB,一樓平面,1500000,13.74,一樓\n"
+    "RPQOMLTLMHLGFDC68CB,坡道平面,800000,25.00,地下一層\n"
+)
+
+# 欄位定義說明檔（schema-*.csv）範例：單標頭、非成交資料。
+_SAMPLE_SCHEMA_CSV = (
+    "name,title\n"
+    "鄉鎮市區,鄉鎮市區\n"
+    "交易標的,交易標的\n"
+)
+
 
 def test_build_download_url_latest():
     """無 season 時應組出最新一期下載網址。"""
@@ -45,6 +60,32 @@ def test_parse_land_csv(tmp_path: Path):
     assert records[0]["鄉鎮市區"] == "大安區"
     assert records[0]["總價元"] == "12000000"
     assert records[1]["鄉鎮市區"] == "信義區"
+
+
+def test_parse_land_csv_subtable(tmp_path: Path):
+    """子表首欄為英數編號的資料列不應被誤判為英文標頭跳過。"""
+    csv_path = tmp_path / "e_lvr_land_b_park.csv"
+    csv_path.write_text(_SAMPLE_SUBTABLE_CSV, encoding="utf-8")
+
+    records = fetcher.parse_land_csv(csv_path)
+
+    assert len(records) == 2
+    assert records[0]["編號"] == "RPTNMLQKMHLGFJE66CB"
+    assert records[0]["車位類別"] == "一樓平面"
+    assert records[1]["車位價格"] == "800000"
+
+
+def test_parse_land_csv_without_english_header(tmp_path: Path):
+    """缺英文標頭列時，第一列資料不應被跳過。"""
+    csv_path = tmp_path / "no_eng_header.csv"
+    csv_path.write_text(
+        "鄉鎮市區,總價元\n大安區,12000000\n信義區,8500000\n",
+        encoding="utf-8")
+
+    records = fetcher.parse_land_csv(csv_path)
+
+    assert len(records) == 2
+    assert records[0]["鄉鎮市區"] == "大安區"
 
 
 def test_parse_land_csv_empty(tmp_path: Path):
@@ -87,10 +128,12 @@ def test_download_opendata(tmp_path: Path):
 
 
 def test_fetch_and_parse(tmp_path: Path):
-    """整合流程：mock 下載後應正確解壓並解析。"""
+    """整合流程：mock 下載後應正確解壓並解析，並排除 schema 檔。"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("a_lvr_land_a.csv", _SAMPLE_CSV)
+        zf.writestr("e_lvr_land_b_park.csv", _SAMPLE_SUBTABLE_CSV)
+        zf.writestr("schema-main.csv", _SAMPLE_SCHEMA_CSV)
 
     fake_response = mock.Mock()
     fake_response.iter_content.return_value = [buf.getvalue()]
@@ -102,3 +145,5 @@ def test_fetch_and_parse(tmp_path: Path):
 
     assert "a_lvr_land_a.csv" in result
     assert len(result["a_lvr_land_a.csv"]) == 2
+    assert len(result["e_lvr_land_b_park.csv"]) == 2
+    assert "schema-main.csv" not in result

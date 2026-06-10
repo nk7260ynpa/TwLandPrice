@@ -22,6 +22,8 @@ _LATEST_URL = "https://plvr.land.moi.gov.tw/Download"
 _SEASON_URL = "https://plvr.land.moi.gov.tw/DownloadSeason"
 # 全國 CSV 格式批次檔名。
 _DEFAULT_FILE_NAME = "lvr_landcsv.zip"
+# 欄位定義說明檔（非成交資料）的檔名前綴。
+_SCHEMA_PREFIX = "schema-"
 # 下載逾時秒數。
 _TIMEOUT = 60
 # 中文字元的 Unicode 範圍（用於判斷標頭列）。
@@ -97,11 +99,13 @@ def extract_zip(zip_path: Path, dest_dir: Path) -> list[Path]:
     return sorted(csv_files)
 
 
-def _looks_like_english_header(row: list[str]) -> bool:
+def _is_english_header_row(row: list[str]) -> bool:
     """判斷某列是否為內政部 CSV 的英文欄名標頭列。
 
     內政部 CSV 第一列為中文欄名、第二列為英文欄名，第三列起才是資料。
-    以「該列首欄不含任何中文字元」作為英文標頭的判準。
+    以「整列所有欄位皆不含中文字元」作為英文標頭的判準。本函式僅應
+    用於緊接中文標頭的第一列：子表（``_land``/``_build``/``_park``）
+    資料列首欄為英數編號，若對每一列套用此判準會將資料誤判為標頭。
 
     Args:
         row: CSV 的一列（欄位字串清單）。
@@ -109,16 +113,20 @@ def _looks_like_english_header(row: list[str]) -> bool:
     Returns:
         該列為英文標頭時回傳 ``True``。
     """
-    if not row or not row[0]:
+    cells = [cell for cell in row if cell.strip()]
+    if not cells:
         return False
-    return all(not (_CJK_START <= ch <= _CJK_END) for ch in row[0])
+    return all(not (_CJK_START <= ch <= _CJK_END)
+               for cell in cells for ch in cell)
 
 
 def parse_land_csv(csv_path: Path) -> list[dict[str, str]]:
     """解析單一筆實價登錄 CSV，回傳記錄清單。
 
     內政部 CSV 採雙標頭格式（第一列中文欄名、第二列英文欄名）。本函式
-    以中文欄名作為 key，並自動跳過英文標頭列與空白列。
+    以中文欄名作為 key，並自動跳過英文標頭列與空白列。英文標頭判斷僅
+    套用於緊接中文標頭的第一列，避免子表（``_land``/``_build``/
+    ``_park``）首欄為英數編號的資料列被誤判跳過。
 
     Args:
         csv_path: CSV 檔案路徑。
@@ -134,10 +142,10 @@ def parse_land_csv(csv_path: Path) -> list[dict[str, str]]:
             logger.warning("CSV 無內容：%s", csv_path)
             return []
         records: list[dict[str, str]] = []
-        for row in reader:
+        for index, row in enumerate(reader):
             if not any(cell.strip() for cell in row):
                 continue
-            if _looks_like_english_header(row):
+            if index == 0 and _is_english_header_row(row):
                 continue
             records.append(dict(zip(headers, row)))
     logger.info("解析 %s：%d 筆", csv_path.name, len(records))
@@ -148,6 +156,8 @@ def fetch_and_parse(workdir: Path, season: str | None = None,
                     file_name: str = _DEFAULT_FILE_NAME
                     ) -> dict[str, list[dict[str, str]]]:
     """完整流程：下載 → 解壓 → 解析。
+
+    ZIP 內 ``schema-*.csv`` 為欄位定義說明檔、非成交資料，不列入解析。
 
     Args:
         workdir: 工作目錄，用於存放 ZIP 與解壓結果。
@@ -160,8 +170,13 @@ def fetch_and_parse(workdir: Path, season: str | None = None,
     workdir.mkdir(parents=True, exist_ok=True)
     zip_path = download_opendata(workdir / file_name, season, file_name)
     csv_files = extract_zip(zip_path, workdir / "extracted")
+    data_files = [path for path in csv_files
+                  if not path.name.startswith(_SCHEMA_PREFIX)]
+    if len(data_files) != len(csv_files):
+        logger.info("排除 %d 個 schema 欄位定義檔",
+                    len(csv_files) - len(data_files))
     result: dict[str, list[dict[str, str]]] = {}
-    for csv_path in csv_files:
+    for csv_path in data_files:
         result[csv_path.name] = parse_land_csv(csv_path)
     total = sum(len(records) for records in result.values())
     logger.info("全部完成：%d 個 CSV、共 %d 筆", len(result), total)

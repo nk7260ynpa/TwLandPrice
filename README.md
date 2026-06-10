@@ -64,17 +64,18 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 | `download_opendata` | 下載批次 ZIP |
 | `extract_zip` | 解壓並列出其中的 CSV |
 | `parse_land_csv` | 解析雙標頭 CSV（以中文欄名為 key） |
-| `fetch_and_parse` | 完整流程：下載 → 解壓 → 解析 |
+| `fetch_and_parse` | 完整流程：下載 → 解壓 → 解析（排除 `schema-*.csv`） |
 
 > 內政部 CSV 採雙標頭格式（第一列中文欄名、第二列英文欄名），
-> `parse_land_csv` 會以中文欄名為 key 並自動跳過英文標頭列。
+> `parse_land_csv` 會以中文欄名為 key 並自動跳過英文標頭列；
+> 主表與 `_land`／`_build`／`_park` 子表皆可正確解析。
+> ZIP 內的 `schema-*.csv` 為欄位定義說明檔，不列入解析。
 
 ## 待辦事項
 
 目前僅完成資料擷取層，後續規劃如下：
 
-- [ ] **資料清理**：正規化欄位（日期、金額、面積單位等），並正確區分
-  主表與 `_land`/`_build`/`_park` 子表及 schema 檔。
+- [ ] **資料清理**：正規化欄位（日期、金額、面積單位等）。
 - [ ] **資料儲存**：將清理後的資料寫入資料庫，支援跨期累積與查詢。
 - [ ] **資料分析**：依地區、時間、交易類型等維度進行統計分析。
 - [ ] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
