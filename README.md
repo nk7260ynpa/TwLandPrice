@@ -12,13 +12,16 @@ TwLandPrice/
 │   ├── cleaner.py        # 欄位清理／正規化（日期、金額、面積、樓層等）
 │   ├── storage.py        # 清理後資料寫入 SQLite（跨期累積與查詢）
 │   ├── analyzer.py       # 統計分析（縣市／地區／月份／交易類型報表）
-│   └── visualizer.py     # HTML 視覺化報告（縣市方格地圖＋圖表）
+│   ├── visualizer.py     # HTML 視覺化報告（縣市方格地圖＋圖表）
+│   ├── mapviewer.py      # 互動式地價熱力圖（離線單檔，真實地理邊界）
+│   └── assets/           # 地圖內嵌資源（Leaflet、村里界 TopoJSON）
 ├── tests/                # 單元測試
 │   ├── test_fetcher.py
 │   ├── test_cleaner.py
 │   ├── test_storage.py
 │   ├── test_analyzer.py
-│   └── test_visualizer.py
+│   ├── test_visualizer.py
+│   └── test_mapviewer.py
 ├── docker/               # Docker 環境
 │   ├── Dockerfile
 │   ├── build.sh          # 建立 image
@@ -73,6 +76,19 @@ docker/build.sh
 ./run.sh visualize                                 # 買賣報告 → output/report_sale.html
 ./run.sh visualize --table rent                    # 租賃報告 → output/report_rent.html
 ```
+
+### 產生互動式地價熱力圖（需先以 `--db` 入庫）
+
+```bash
+./run.sh map                                        # 買賣 → output/map_sale.html
+./run.sh map --table rent                           # 租賃 → output/map_rent.html
+./run.sh map --metric mean                          # 改以單價平均上色
+```
+
+產出為**可離線開啟的單一 HTML**：Leaflet 程式庫與全台 7,701 個村里界
+TopoJSON 全部內嵌，每個鄉鎮市區依單價中位數於真實地理邊界上以白→深紅
+上色。可切換縣市／鄉鎮市區／村里層級、開關 OpenStreetMap 街道底圖（需
+網路）、調整透明度、搜尋村里，滑鼠懸停顯示該區成交筆數與單價。
 
 ### 執行單元測試
 
@@ -159,6 +175,22 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
 > 報告內容：縣市地價地圖、成交量前 15 區單價橫條圖、月份趨勢折線圖
 > （單價＋筆數）、交易類型橫條圖；輸出至 `output/`（不納入版控）。
 
+## 主要模組：`twlandprice.mapviewer`
+
+| 函式 | 說明 |
+| --- | --- |
+| `load_price_data` | 自 DB 組裝縣市／鄉鎮市區價格與色階定義域（p5～p95） |
+| `_normalize` | 跨資料源地名正規化（實價登錄「臺」↔ taiwan-atlas「台」） |
+| `render_map` / `write_map` | 組裝／輸出內嵌資源的離線單檔 HTML |
+| `main` | CLI：`--db`／`--table`／`--metric`／`--output` |
+
+> 互動式 Leaflet 地圖，以**真實地理邊界**呈現地價熱力圖，與 visualizer
+> 的方格地圖互補。Leaflet 1.9.4、topojson-client 與 taiwan-atlas 村里界
+> TopoJSON（counties 22／towns 368／villages 7,701）全部內嵌於 `assets/`，
+> 產出單檔 HTML 可離線開啟（僅 OSM 街道底圖需網路）。村里層繼承所屬
+> 鄉鎮市區的價格上色；地名 join 在正規化後覆蓋 325 個鄉鎮市區中的 323 個
+> （省轄市無分區登錄的「嘉義市／新竹市」2 筆無從對應，以灰底呈現）。
+
 ## 待辦事項
 
 資料管線四層（擷取 → 清理 → 儲存 → 分析／視覺化）皆已完成：
@@ -171,6 +203,11 @@ docker compose -f docker/docker-compose.yaml run --rm app pytest
   `./run.sh analyze`；指標為筆數、單價中位數／平均、總價中位數。
 - [x] **視覺化**：以地圖與圖表呈現台灣地價分布與趨勢。
   `./run.sh visualize` 產生單檔 HTML 報告（縣市方格地圖＋圖表）。
+
+延伸功能：
+
+- [x] **互動式地價熱力圖**：以真實地理邊界（含村里）呈現的離線 Leaflet
+  地圖。`./run.sh map` 產生可離線開啟的單檔 HTML。
 
 ## 版本控制與遠端
 
