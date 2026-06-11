@@ -56,7 +56,7 @@ def test_percentile():
 
 
 def test_load_price_data_structure(tmp_path: Path):
-    """價格資料：含 counties／towns 兩層級，鍵經正規化。"""
+    """熱力資料：含 counties／towns 兩層級，鍵經正規化。"""
     conn = _make_db(tmp_path)
     data = mapviewer.load_price_data(conn, "sale", "median")
     conn.close()
@@ -64,33 +64,48 @@ def test_load_price_data_structure(tmp_path: Path):
     assert data["metric"] == "median"
     assert data["table"] == "sale"
     assert data["tableLabel"] == "買賣"
+    assert data["householdYear"]            # 戶數統計年（民國）
     # 縣市層：臺北市 → 正規化鍵 台北市
     counties = data["levels"]["counties"]["values"]
     assert "台北市" in counties
-    assert counties["台北市"]["n"] == 4
+    assert counties["台北市"]["count"] == 4
     # 鄉鎮市區層：鍵為「縣市/鄉鎮市區」，臺→台
     towns = data["levels"]["towns"]["values"]
     assert "台北市/大安區" in towns
     assert "台北市/信義區" in towns
     daan = towns["台北市/大安區"]
-    assert daan["n"] == 2
+    assert daan["count"] == 2
     assert daan["median"] == 200000
 
 
-def test_load_price_data_domain(tmp_path: Path):
-    """色階定義域為 [最小值, 第 95 百分位]。"""
+def test_load_price_data_four_metric_domains(tmp_path: Path):
+    """每層級含四種指標的色階定義域（median/mean/count/rate）。"""
     conn = _make_db(tmp_path)
     data = mapviewer.load_price_data(conn, "sale", "median")
     conn.close()
 
-    domain = data["levels"]["towns"]["domain"]
-    # 大安區中位數 200000、信義區 200000 → 兩值相同
-    assert domain[0] == 200000
-    assert domain[1] == 200000
+    domains = data["levels"]["towns"]["domains"]
+    assert set(domains) == {"median", "mean", "count", "rate"}
+    # 大安區、信義區單價中位數皆 200000 → 兩端相同
+    assert domains["median"] == [200000, 200000]
+
+
+def test_load_price_data_rate(tmp_path: Path):
+    """交易率＝筆數 ÷ 戶數 × 1000（每千戶），戶數取自 households.json。"""
+    conn = _make_db(tmp_path)
+    data = mapviewer.load_price_data(conn, "sale", "median")
+    conn.close()
+
+    households = mapviewer._load_households()["households"]
+    daan = data["levels"]["towns"]["values"]["台北市/大安區"]
+    expected = round(2 / households["台北市/大安區"] * 1000, 3)
+    assert daan["households"] == households["台北市/大安區"]
+    assert daan["rate"] == expected
+    assert daan["rate"] > 0
 
 
 def test_load_price_data_mean_metric(tmp_path: Path):
-    """metric=mean 時域以平均計算（字串單價不計入）。"""
+    """metric=mean 時「單價」模式採平均（字串單價不計入）。"""
     conn = _make_db(tmp_path)
     data = mapviewer.load_price_data(conn, "sale", "mean")
     conn.close()
@@ -111,7 +126,7 @@ def test_render_map_injects_resources(tmp_path: Path):
     # 佔位符全部被替換
     for token in ["@@LEAFLET_CSS@@", "@@LEAFLET_JS@@", "@@TOPOJSON_JS@@",
                   "@@TOPO_DATA@@", "@@PRICE_DATA@@", "@@TITLE@@",
-                  "@@METRIC_LABEL@@", "@@TABLE_LABEL@@", "@@NO_DATA_FILL@@"]:
+                  "@@TABLE_LABEL@@", "@@NO_DATA_FILL@@"]:
         assert token not in html
     # 內嵌資源與資料
     assert "window.__TOPO__" in html
@@ -119,8 +134,13 @@ def test_render_map_injects_resources(tmp_path: Path):
     assert _FAKE_TOPO in html
     assert "L.map" in html                 # 內嵌的 Leaflet
     assert "topojson" in html              # 內嵌的 topojson-client
-    assert "台北市/大安區" in html          # 注入的價格鍵
+    assert "台北市/大安區" in html          # 注入的熱力資料鍵
     assert "台灣地價熱力圖（買賣）" in html
+    # 三種熱力呈現方式的切換鈕
+    assert 'id="metricSeg"' in html
+    assert 'data-metric="count"' in html   # 交易量
+    assert 'data-metric="rate"' in html    # 交易率
+    assert "交易量" in html and "交易率" in html
 
 
 def test_render_map_no_script_break(tmp_path: Path):

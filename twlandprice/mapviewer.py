@@ -31,8 +31,11 @@ _ASSETS_DIR = Path(__file__).parent / "assets"
 # 各主表的中文標籤（與 visualizer 一致）。
 _TABLE_LABELS = {"sale": "買賣", "presale": "預售屋", "rent": "租賃"}
 
-# 上色指標 → analyzer 報表的欄位名。
+# 「單價」呈現模式可選的指標 → analyzer 報表的欄位名（供 CLI 與標籤）。
 _METRIC_FIELDS = {"median": "單價中位數", "mean": "單價平均"}
+
+# 四種熱力呈現指標於 values 內的數值鍵：單價中位數／平均、交易量、交易率。
+_METRIC_KEYS = ("median", "mean", "count", "rate")
 
 # 無資料區塊的填色。
 _NO_DATA_FILL = "#cfd6df"
@@ -70,65 +73,111 @@ def _percentile(sorted_values: list[float], q: float) -> float:
     return float(sorted_values[low])
 
 
+def _load_households() -> dict[str, object]:
+    """讀取各鄉鎮市區戶數（內政部戶政司），供計算交易率。
+
+    Returns:
+        含 ``統計年`` 與 ``households``（正規化「縣市/鄉鎮市區」→ 戶數）
+        的 dict。
+    """
+    return json.loads(
+        (_ASSETS_DIR / "households.json").read_text(encoding="utf-8"))
+
+
+def _county_households(households: dict[str, int]) -> dict[str, int]:
+    """將鄉鎮市區戶數彙總到縣市層（作為縣市交易率的分母）。
+
+    Args:
+        households: 正規化「縣市/鄉鎮市區」→ 戶數。
+
+    Returns:
+        正規化縣市名 → 戶數總和。
+    """
+    totals: dict[str, int] = {}
+    for key, value in households.items():
+        county = key.split("/", 1)[0]
+        totals[county] = totals.get(county, 0) + value
+    return totals
+
+
 def _level_payload(rows: list[dict[str, object]], key_fields: list[str],
-                   metric: str) -> dict[str, object]:
-    """將 analyzer 報表轉為前端可用的單一層級資料（值字典＋色階定義域）。
+                   households: dict[str, int]) -> dict[str, object]:
+    """將 analyzer 報表轉為前端單一層級資料（多指標值與各自色階定義域）。
+
+    為四種熱力呈現指標各算數值與色階定義域：``median``／``mean``（單價）、
+    ``count``（交易量＝筆數）、``rate``（交易率＝筆數 ÷ 戶數 × 1000，
+    即每千戶成交筆數；無對應戶數者為 ``None``）。
 
     Args:
         rows: ``analyzer`` 報表輸出（每區一筆 dict）。
         key_fields: 組成查找鍵的欄位（如 ``["縣市"]`` 或
             ``["縣市", "鄉鎮市區"]``），值會經正規化後以 ``/`` 串接。
-        metric: 上色指標（``median`` 或 ``mean``）。
+        households: 與 ``key_fields`` 同層級的戶數查找表（鍵為正規化字串）。
 
     Returns:
-        含 ``domain``（第 5 與第 95 百分位，兩端離群值會被截到端點）與
+        含 ``domains``（各指標 [p5, p95]，兩端離群值截到端點）與
         ``values``（查找鍵 → 統計 dict）的 dict。
     """
-    field = _METRIC_FIELDS[metric]
     values: dict[str, dict[str, object]] = {}
-    metric_values: list[float] = []
+    series: dict[str, list[float]] = {m: [] for m in _METRIC_KEYS}
     for row in rows:
         key = "/".join(_normalize(str(row[f])) for f in key_fields)
-        values[key] = {
-            "n": row["筆數"],
+        count = row["筆數"]
+        household = households.get(key)
+        rate = round(count / household * 1000, 3) if household else None
+        entry = {
+            "count": count,
             "median": row["單價中位數"],
             "mean": row["單價平均"],
             "total": row["總價中位數"],
+            "households": household,
+            "rate": rate,
         }
-        value = row.get(field)
-        if isinstance(value, (int, float)):
-            metric_values.append(float(value))
-    if metric_values:
-        metric_values.sort()
-        domain = [_percentile(metric_values, 0.05),
-                  _percentile(metric_values, 0.95)]
-    else:
-        domain = [0, 1]
-    return {"domain": domain, "values": values}
+        values[key] = entry
+        for metric in _METRIC_KEYS:
+            value = entry[metric]
+            if isinstance(value, (int, float)):
+                series[metric].append(float(value))
+    domains: dict[str, list[float]] = {}
+    for metric, observed in series.items():
+        if observed:
+            observed.sort()
+            domains[metric] = [_percentile(observed, 0.05),
+                               _percentile(observed, 0.95)]
+        else:
+            domains[metric] = [0, 1]
+    return {"domains": domains, "values": values}
 
 
 def load_price_data(conn: sqlite3.Connection, table: str = "sale",
                     metric: str = "median") -> dict[str, object]:
-    """自資料庫建立地圖所需的縣市與鄉鎮市區價格資料。
+    """自資料庫與戶數資料建立地圖所需的縣市與鄉鎮市區熱力資料。
 
     Args:
         conn: 資料庫連線。
         table: 主表名，預設 ``sale``。
-        metric: 上色指標（``median`` 或 ``mean``），預設 ``median``。
+        metric: 「單價」呈現模式採用的指標（``median``／``mean``），
+            預設 ``median``；交易量與交易率為另外兩種固定呈現模式。
 
     Returns:
-        含 ``metric``、``table`` 與 ``levels``（``counties``／``towns``
-        兩層級的 domain 與 values）的 dict，可直接 ``json.dumps``。
+        含 ``metric``、``table``、``householdYear`` 與 ``levels``
+        （``counties``／``towns`` 兩層級的 domains 與 values）的 dict，
+        可直接 ``json.dumps``。
     """
+    household_data = _load_households()
+    town_households = household_data.get("households", {})
+    county_households = _county_households(town_households)
     counties = analyzer.county_stats(conn, table)
     towns = analyzer.district_stats(conn, table)
     return {
         "metric": metric,
         "table": table,
         "tableLabel": _TABLE_LABELS.get(table, table),
+        "householdYear": household_data.get("統計年"),
         "levels": {
-            "counties": _level_payload(counties, ["縣市"], metric),
-            "towns": _level_payload(towns, ["縣市", "鄉鎮市區"], metric),
+            "counties": _level_payload(counties, ["縣市"], county_households),
+            "towns": _level_payload(towns, ["縣市", "鄉鎮市區"],
+                                    town_households),
         },
     }
 
@@ -171,8 +220,6 @@ def render_map(price_data: dict[str, object],
     if topojson_data is None:
         topojson_data = _load_topojson()
     table_label = price_data.get("tableLabel", price_data.get("table", ""))
-    metric_label = "單價中位數" if price_data.get("metric") == "median" \
-        else "單價平均"
     return (_HTML_TEMPLATE
             .replace("@@LEAFLET_CSS@@", _load_asset_text("leaflet.css"))
             .replace("@@LEAFLET_JS@@", _load_asset_text("leaflet.js"))
@@ -182,7 +229,6 @@ def render_map(price_data: dict[str, object],
             .replace("@@PRICE_DATA@@",
                      json.dumps(price_data, ensure_ascii=False))
             .replace("@@TITLE@@", f"台灣地價熱力圖（{table_label}）")
-            .replace("@@METRIC_LABEL@@", metric_label)
             .replace("@@TABLE_LABEL@@", table_label)
             .replace("@@NO_DATA_FILL@@", _NO_DATA_FILL))
 
@@ -450,7 +496,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="panel">
   <div class="panel-header">
     <h1>台灣地價熱力圖</h1>
-    <div class="sub">@@TABLE_LABEL@@ ・ 依@@METRIC_LABEL@@上色（元/m²）</div>
+    <div class="sub">@@TABLE_LABEL@@ ・ 縣市／鄉鎮市區／村里</div>
   </div>
   <div class="panel-body">
 
@@ -464,11 +510,20 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
 
     <div>
-      <div class="section-label">單價 元/平方公尺</div>
+      <div class="section-label">熱力依據</div>
+      <div class="seg" id="metricSeg">
+        <button type="button" data-metric="price" class="active">單價</button>
+        <button type="button" data-metric="count">交易量</button>
+        <button type="button" data-metric="rate">交易率</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label" id="legendTitle">單價 元/平方公尺</div>
       <div class="legend">
         <div class="bar"></div>
         <div class="ticks"><span id="legendLo">—</span><span id="legendHi">—</span></div>
-        <div class="nodata"><span class="sw"></span>無成交資料</div>
+        <div class="nodata"><span class="sw"></span>無資料</div>
       </div>
     </div>
 
@@ -564,13 +619,26 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   document.getElementById('map').classList.add('no-streets');
 
   // ---------- 狀態 ----------
-  var state = { level: 'towns', fillOpacity: 0.75, adminVisible: true };
+  var state = { level: 'towns', metricMode: 'price', fillOpacity: 0.75, adminVisible: true };
   var geoCache = {};      // level -> GeoJSON FeatureCollection
   var layerCache = {};    // level -> L.geoJSON
   var meshLayers = [];
   var currentLayer = null;
   var hoveredPath = null;
   var searchIndex = [];
+
+  // ---------- 熱力指標 ----------
+  // 「單價」模式採資料指定的 median／mean；交易量＝count、交易率＝rate。
+  var PRICE_METRIC = PRICES.metric === 'mean' ? 'mean' : 'median';
+  function fmtInt(v) { return (v == null) ? '—' : Number(Math.round(v)).toLocaleString('en-US'); }
+  function fmtRate(v) { return (v == null) ? '—' : Number(v).toFixed(2); }
+  var METRIC_META = {
+    median: { title: '單價中位數 元/平方公尺', fmt: fmtInt },
+    mean:   { title: '單價平均 元/平方公尺', fmt: fmtInt },
+    count:  { title: '交易量 成交筆數', fmt: fmtInt },
+    rate:   { title: '交易率 每千戶成交筆數', fmt: fmtRate }
+  };
+  function metricKey() { return state.metricMode === 'price' ? PRICE_METRIC : state.metricMode; }
 
   // ---------- 地名與屬性 ----------
   function norm(s) { return (s || '').replace(/臺/g, '台').trim(); }
@@ -600,7 +668,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     return PRICES.levels.towns.values[key] || null;
   }
   function activeDomain(level) {
-    return (level === 'counties' ? PRICES.levels.counties : PRICES.levels.towns).domain;
+    var lv = (level === 'counties') ? PRICES.levels.counties : PRICES.levels.towns;
+    return lv.domains[metricKey()];
   }
   function colorScale(t) {
     t = Math.max(0, Math.min(1, t));
@@ -611,7 +680,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   function fillFor(level, p) {
     var rec = lookupRecord(level, p);
-    var v = rec ? rec[PRICES.metric] : null;
+    var v = rec ? rec[metricKey()] : null;
     if (v == null) return '@@NO_DATA_FILL@@';
     var d = activeDomain(level);
     var t = d[1] <= d[0] ? 0.5 : (v - d[0]) / (d[1] - d[0]);
@@ -643,9 +712,11 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     var price;
     if (rec) {
       price = '<div class="price">'
-        + PRICES.tableLabel + '：<b>' + fmt(rec.n) + '</b> 筆<br>'
-        + '單價中位數 <b class="big">' + fmt(rec.median) + '</b> 元/m²<br>'
-        + '單價平均 <b>' + fmt(rec.mean) + '</b> ・ 總價中位數 <b>' + fmt(rec.total) + '</b> 元'
+        + PRICES.tableLabel + '成交 <b class="big">' + fmt(rec.count) + '</b> 筆'
+        + (rec.households ? '　/ ' + fmt(rec.households) + ' 戶' : '') + '<br>'
+        + '交易率 <b>' + fmtRate(rec.rate) + '</b> 筆/千戶<br>'
+        + '單價中位數 <b>' + fmt(rec.median) + '</b> ・ 平均 <b>' + fmt(rec.mean) + '</b> 元/m²<br>'
+        + '總價中位數 <b>' + fmt(rec.total) + '</b> 元'
         + '</div>';
     } else {
       price = '<div class="price">無成交資料</div>';
@@ -704,9 +775,11 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
   }
   function updateLegend(level) {
+    var meta = METRIC_META[metricKey()];
     var d = activeDomain(level);
-    document.getElementById('legendLo').textContent = Number(Math.round(d[0])).toLocaleString('en-US');
-    document.getElementById('legendHi').textContent = Number(Math.round(d[1])).toLocaleString('en-US');
+    document.getElementById('legendTitle').textContent = meta.title;
+    document.getElementById('legendLo').textContent = meta.fmt(d[0]);
+    document.getElementById('legendHi').textContent = meta.fmt(d[1]);
   }
   function showLevel(level) {
     state.level = level;
@@ -730,6 +803,15 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
     btn.classList.add('active');
     showLevel(btn.dataset.level);
+  });
+  document.getElementById('metricSeg').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-metric]');
+    if (!btn) return;
+    this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    state.metricMode = btn.dataset.metric;
+    updateLegend(state.level);
+    if (currentLayer) currentLayer.setStyle(baseStyle);
   });
   document.getElementById('streetToggle').addEventListener('change', function () {
     if (this.checked) {
@@ -811,7 +893,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById('stats').innerHTML =
         '共 <b>' + nCounty + '</b> 縣市 ・ <b>' + nTown + '</b> 鄉鎮市區 ・ <b>' + nVill + '</b> 村里<br>' +
         '其中 <b>' + withData + '</b> 個鄉鎮市區有' + PRICES.tableLabel + '成交資料<br>' +
-        '點擊區塊放大；滑鼠移上去看單價';
+        '交易率分母：戶政司 ' + (PRICES.householdYear || '') + ' 年戶數<br>' +
+        '點擊區塊放大；滑鼠移上去看明細';
       loading.classList.add('hidden');
       setTimeout(function () { if (loading.parentNode) loading.parentNode.removeChild(loading); }, 350);
     } catch (err) {
